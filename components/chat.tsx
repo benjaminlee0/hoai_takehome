@@ -1,7 +1,7 @@
 'use client';
 
-import type { Attachment, Message } from 'ai';
 import { useChat } from 'ai/react';
+import type { Message, Attachment } from 'ai';
 import { useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 
@@ -49,8 +49,12 @@ export function Chat({
     onFinish: () => {
       mutate('/api/history');
     },
-    onError: (error) => {
-      toast.error('An error occured, please try again!');
+    onError: async (error) => {
+      const message =
+        typeof error === 'string'
+          ? error
+          : (error as Error)?.message || 'An error occurred, please try again!';
+      toast.error(message);
     },
   });
 

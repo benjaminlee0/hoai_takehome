@@ -203,6 +203,7 @@ function PureMultimodalInput({
 
       <input
         type="file"
+        accept=".png,.jpg,.jpeg,.svg,.pdf"
         className="fixed -top-4 -left-4 size-0.5 opacity-0 pointer-events-none"
         ref={fileInputRef}
         multiple

@@ -20,7 +20,7 @@ import {
   sanitizeResponseMessages,
 } from '@/lib/utils';
 
-import { generateTitleFromUserMessage } from '../../actions';
+import { generateTitleFromUserMessage } from '../../(chat)/actions';
 import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
@@ -29,12 +29,21 @@ import { getWeather } from '@/lib/ai/tools/get-weather';
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
-  const {
-    id,
-    messages,
-    selectedChatModel,
-  }: { id: string; messages: Array<Message>; selectedChatModel: string } =
-    await request.json();
+  const raw = await request.text();
+  console.log('📦 Raw request body:', raw);
+
+  const body: {
+    id: string;
+    messages: Array<Message>;
+    selectedChatModel: string;
+    experimental_attachments?: any;
+  } = JSON.parse(raw);
+
+  const { id, messages, selectedChatModel } = body;
+  const lastMessage = messages[messages.length - 1];
+  const parsedAttachments = lastMessage.experimental_attachments || [];
+
+  console.log('📎 Attachments:', parsedAttachments);
 
   const session = await auth();
 
@@ -59,12 +68,62 @@ export async function POST(request: Request) {
     messages: [{ ...userMessage, createdAt: new Date(), chatId: id }],
   });
 
+  // 🧾 PDF processing from base64-encoded attachments
+  const pdf = (await import('pdf-parse')).default;
+
+  const pdfTexts = await Promise.all(
+    parsedAttachments
+      .filter((att: any) => att.contentType === 'application/pdf')
+      .map(async (att: any) => {
+        try {
+          const base64 = att.url.split(',')[1];
+          const buffer = Buffer.from(base64, 'base64');
+          const data = await pdf(buffer);
+          return data.text.trim();
+        } catch (err) {
+          console.error('❌ Failed to parse base64 PDF:', err);
+          return null;
+        }
+      })
+  );
+
+  const combinedPDFText = pdfTexts.filter(Boolean).join('\n\n');
+
+  if (combinedPDFText) {
+    userMessage.content += `\n\nExtract the following fields from this invoice:\n` +
+      `- Vendor Name\n` +
+      `- Customer Name\n` +
+      `- Invoice Number\n` +
+      `- Invoice Date\n` +
+      `- Due Date\n` +
+      `- Total Amount\n` +
+      `- Line Items\n\n` +
+      `Invoice text:\n${combinedPDFText}`;
+  }
+
+  // const userMessageIndex = messages.findIndex((msg) => msg.id === userMessage.id);
+
+  const cleanedMessages = messages.map((msg) => {
+  const { experimental_attachments, ...rest } = msg;
+
+  // Replace content for the modified message (e.g. with extracted invoice text)
+  if (msg.id === userMessage.id) {
+    return {
+      ...rest,
+      content: userMessage.content,
+    };
+  }
+
+  // Strip attachments from all other messages
+  return rest;
+});
+
   return createDataStreamResponse({
     execute: (dataStream) => {
       const result = streamText({
         model: myProvider.languageModel(selectedChatModel),
         system: systemPrompt({ selectedChatModel }),
-        messages,
+        messages: cleanedMessages,
         maxSteps: 5,
         experimental_activeTools:
           selectedChatModel === 'chat-model-reasoning'
@@ -120,8 +179,9 @@ export async function POST(request: Request) {
         sendReasoning: true,
       });
     },
-    onError: () => {
-      return 'Oops, an error occured!';
+    onError: (error) => {
+      console.log(error);
+      return 'Oops, an error occurred!';
     },
   });
 }
