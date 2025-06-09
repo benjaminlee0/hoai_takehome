@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e0480dd8-b96f-4451-9d4e-073dbe6de27a",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "5ff1ca7c-6eb7-4673-a44c-09d2ca287828",
+  "prevId": "e0480dd8-b96f-4451-9d4e-073dbe6de27a",
   "tables": {
     "Chat": {
       "name": "Chat",
@@ -154,6 +154,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'USD'"
+        },
         "createdAt": {
           "name": "createdAt",
           "type": "integer",
@@ -174,14 +182,6 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'pending'"
         }
       },
       "indexes": {},

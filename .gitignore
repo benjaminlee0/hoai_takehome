@@ -39,3 +39,9 @@ yarn-error.log*
 
 .idea
 sqlite.db
+
+# Google Cloud service account keys
+*-service-account-key.json
+service-account*.json
+gcp-*.json
+*-gcp.json

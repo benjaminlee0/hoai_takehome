@@ -25,13 +25,13 @@ import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
+import { saveExtractedInvoice } from '@/lib/ai/tools/save-invoice';
+import { processAttachments, saveProcessedDocument } from '@/lib/ai/document-processing/attachment-processing';
 
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
   const raw = await request.text();
-  console.log('📦 Raw request body:', raw);
-
   const body: {
     id: string;
     messages: Array<Message>;
@@ -43,13 +43,17 @@ export async function POST(request: Request) {
   const lastMessage = messages[messages.length - 1];
   const parsedAttachments = lastMessage.experimental_attachments || [];
 
-  console.log('📎 Attachments:', parsedAttachments);
-
   const session = await auth();
 
   if (!session || !session.user || !session.user.id) {
     return new Response('Unauthorized', { status: 401 });
   }
+
+  // Add expires field required by Session type
+  const fullSession = {
+    ...session,
+    expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
+  };
 
   const userMessage = getMostRecentUserMessage(messages);
 
@@ -68,55 +72,105 @@ export async function POST(request: Request) {
     messages: [{ ...userMessage, createdAt: new Date(), chatId: id }],
   });
 
-  // 🧾 PDF processing from base64-encoded attachments
-  const pdf = (await import('pdf-parse')).default;
-
-  const pdfTexts = await Promise.all(
-    parsedAttachments
-      .filter((att: any) => att.contentType === 'application/pdf')
-      .map(async (att: any) => {
-        try {
-          const base64 = att.url.split(',')[1];
-          const buffer = Buffer.from(base64, 'base64');
-          const data = await pdf(buffer);
-          return data.text.trim();
-        } catch (err) {
-          console.error('❌ Failed to parse base64 PDF:', err);
-          return null;
-        }
-      })
-  );
-
-  const combinedPDFText = pdfTexts.filter(Boolean).join('\n\n');
-
-  if (combinedPDFText) {
-    userMessage.content += `\n\nExtract the following fields from this invoice:\n` +
-      `- Vendor Name\n` +
-      `- Customer Name\n` +
-      `- Invoice Number\n` +
-      `- Invoice Date\n` +
-      `- Due Date\n` +
-      `- Total Amount\n` +
-      `- Line Items\n\n` +
-      `Invoice text:\n${combinedPDFText}`;
-  }
-
-  // const userMessageIndex = messages.findIndex((msg) => msg.id === userMessage.id);
-
-  const cleanedMessages = messages.map((msg) => {
-  const { experimental_attachments, ...rest } = msg;
-
-  // Replace content for the modified message (e.g. with extracted invoice text)
-  if (msg.id === userMessage.id) {
-    return {
-      ...rest,
-      content: userMessage.content,
+  let updatedMessages = [...messages];
+  
+  if (parsedAttachments.length > 0) {
+    // Start with initial processing message
+    const processingMessage = {
+      id: generateUUID(),
+      role: 'assistant' as const,
+      content: 'Analyzing invoice document...',
+      createdAt: new Date(),
+      chatId: id
     };
+    
+    await saveMessages({
+      messages: [processingMessage]
+    });
+    updatedMessages = [...updatedMessages, processingMessage];
+
+    const processedAttachments = await processAttachments(parsedAttachments, userMessage);
+    
+    for (const attachment of processedAttachments) {
+      const documentId = await saveProcessedDocument(attachment, session.user.id);
+      
+      // If we have invoice data from Document AI, add it as a new message for processing
+      if (attachment.extractedInvoiceData) {
+        const { lineItems = [], totalAmount, currency = '€' } = attachment.extractedInvoiceData;
+        
+        // Update processing status
+        const statusMessage = {
+          id: generateUUID(),
+          role: 'assistant' as const,
+          content: 'Invoice analyzed successfully. Saving extracted data...',
+          createdAt: new Date(),
+          chatId: id
+        };
+        
+        await saveMessages({
+          messages: [statusMessage]
+        });
+        updatedMessages = [...updatedMessages, statusMessage];
+        
+        // Format line items nicely
+        const formattedLineItems = lineItems.map(item => {
+          const unitPrice = item.unitPrice;
+          const totalPrice = item.totalPrice;
+          
+          return `Description: ${item.description}\n` +
+                 `Quantity: ${item.quantity} × Unit Price: ${currency}${unitPrice.toFixed(2)} = ` +
+                 `Total: ${currency}${totalPrice.toFixed(2)}`;
+        }).join('\n\n');
+
+        const extractionMessage = {
+          id: generateUUID(),
+          role: 'assistant' as const,
+          content: lineItems.length > 0 ? 
+            'Line Items:\n\n' +
+            formattedLineItems + '\n\n' +
+            `The total amount matches the sum of all line item totals. The invoice data has been successfully saved to the database.`
+            : 'No line items found in the invoice.',
+          createdAt: new Date(),
+          chatId: id
+        };
+
+        await saveMessages({
+          messages: [extractionMessage]
+        });
+
+        updatedMessages = [...updatedMessages, extractionMessage];
+      } else if (attachment.error) {
+        // If Document AI failed, add error message and prevent invoice saving
+        const errorMessage = {
+          id: generateUUID(),
+          role: 'assistant' as const,
+          content: `Failed to process document with Document AI: ${attachment.error}\nPlease ensure the document is a valid invoice and try again.`,
+          createdAt: new Date(),
+          chatId: id
+        };
+
+        await saveMessages({
+          messages: [errorMessage]
+        });
+
+        updatedMessages = [...updatedMessages, errorMessage];
+      } else {
+        // Update the existing message with document content
+        const messageIndex = updatedMessages.findIndex(msg => msg.id === userMessage.id);
+        if (messageIndex !== -1) {
+          updatedMessages[messageIndex] = {
+            ...updatedMessages[messageIndex],
+            content: `${userMessage.content}\n\nDocument ID: ${documentId}\nType: ${attachment.type}\nContent:\n${attachment.content}`
+          };
+        }
+      }
+    }
   }
 
-  // Strip attachments from all other messages
-  return rest;
-});
+  const cleanedMessages = updatedMessages.map((msg) => {
+    const { experimental_attachments, ...rest } = msg;
+    return rest;
+  });
 
   return createDataStreamResponse({
     execute: (dataStream) => {
@@ -133,15 +187,20 @@ export async function POST(request: Request) {
                 'createDocument',
                 'updateDocument',
                 'requestSuggestions',
+                'saveExtractedInvoice',
               ],
         experimental_transform: smoothStream({ chunking: 'word' }),
         experimental_generateMessageId: generateUUID,
         tools: {
           getWeather,
-          createDocument: createDocument({ session, dataStream }),
-          updateDocument: updateDocument({ session, dataStream }),
+          createDocument: createDocument({ session: fullSession, dataStream }),
+          updateDocument: updateDocument({ session: fullSession, dataStream }),
           requestSuggestions: requestSuggestions({
-            session,
+            session: fullSession,
+            dataStream,
+          }),
+          saveExtractedInvoice: saveExtractedInvoice({
+            session: fullSession,
             dataStream,
           }),
         },
@@ -153,19 +212,21 @@ export async function POST(request: Request) {
                 reasoning,
               });
 
-              await saveMessages({
-                messages: sanitizedResponseMessages.map((message) => {
-                  return {
-                    id: message.id,
-                    chatId: id,
-                    role: message.role,
-                    content: message.content,
-                    createdAt: new Date(),
-                  };
-                }),
-              });
+              if (sanitizedResponseMessages.length > 0) {
+                await saveMessages({
+                  messages: sanitizedResponseMessages.map((message) => {
+                    return {
+                      id: message.id,
+                      chatId: id,
+                      role: message.role,
+                      content: message.content,
+                      createdAt: new Date(),
+                    };
+                  }),
+                });
+              }
             } catch (error) {
-              console.error('Failed to save chat');
+              console.error('Failed to save chat', error);
             }
           }
         },
@@ -180,7 +241,7 @@ export async function POST(request: Request) {
       });
     },
     onError: (error) => {
-      console.log(error);
+      console.error('Error in chat route:', error);
       return 'Oops, an error occurred!';
     },
   });

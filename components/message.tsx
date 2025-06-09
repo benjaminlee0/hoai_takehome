@@ -108,12 +108,15 @@ const PurePreviewMessage = ({
                 )}
 
                 <div
-                  className={cn('flex flex-col gap-4', {
-                    'bg-primary text-primary-foreground px-3 py-2 rounded-xl':
+                  className={cn('flex flex-col', {
+                    'bg-secondary text-secondary-foreground px-3 py-2 rounded-xl':
                       message.role === 'user',
+                    'text-muted-foreground dark:text-foreground': message.role === 'assistant'
                   })}
                 >
-                  <Markdown>{message.content as string}</Markdown>
+                  <div className="prose dark:prose-invert max-w-none break-words">
+                    <Markdown>{message.content as string}</Markdown>
+                  </div>
                 </div>
               </div>
             )}
@@ -161,6 +164,8 @@ const PurePreviewMessage = ({
                             result={result}
                             isReadonly={isReadonly}
                           />
+                        ) : toolName === 'saveExtractedInvoice' ? (
+                          null
                         ) : (
                           <pre>{JSON.stringify(result, null, 2)}</pre>
                         )}
@@ -238,7 +243,7 @@ export const ThinkingMessage = () => {
 
   return (
     <motion.div
-      className="w-full mx-auto max-w-3xl px-4 group/message "
+      className="w-full mx-auto max-w-3xl px-4 group/message"
       initial={{ y: 5, opacity: 0 }}
       animate={{ y: 0, opacity: 1, transition: { delay: 1 } }}
       data-role={role}
@@ -252,12 +257,20 @@ export const ThinkingMessage = () => {
         )}
       >
         <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border">
-          <SparklesIcon size={14} />
+          <div className="animate-spin">
+            <SparklesIcon size={14} />
+          </div>
         </div>
 
         <div className="flex flex-col gap-2 w-full">
           <div className="flex flex-col gap-4 text-muted-foreground">
-            Thinking...
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5, repeat: Infinity, repeatType: "reverse" }}
+            >
+              Analyzing invoice document...
+            </motion.div>
           </div>
         </div>
       </div>

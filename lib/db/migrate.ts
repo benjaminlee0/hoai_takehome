@@ -17,12 +17,12 @@ const runMigrate = async () => {
   await migrate(db, { migrationsFolder: './lib/db/migrations' });
   const end = Date.now();
 
-  console.log('✅ Migrations completed in', end - start, 'ms');
+  console.log('Migrations completed in', end - start, 'ms');
   process.exit(0);
 };
 
 runMigrate().catch((err) => {
-  console.error('❌ Migration failed');
+  console.error('Migration failed');
   console.error(err);
   process.exit(1);
 });

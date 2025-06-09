@@ -14,6 +14,31 @@ CREATE TABLE `Document` (
 	PRIMARY KEY(`id`, `createdAt`)
 );
 --> statement-breakpoint
+CREATE TABLE `Invoice` (
+	`id` text PRIMARY KEY NOT NULL,
+	`documentId` text NOT NULL,
+	`vendorName` text NOT NULL,
+	`customerName` text NOT NULL,
+	`invoiceNumber` text NOT NULL,
+	`invoiceDate` integer NOT NULL,
+	`dueDate` integer NOT NULL,
+	`totalAmount` integer NOT NULL,
+	`createdAt` integer NOT NULL,
+	`updatedAt` integer NOT NULL,
+	`lastEditedBy` text,
+	`status` text DEFAULT 'pending' NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `InvoiceLineItem` (
+	`id` text PRIMARY KEY NOT NULL,
+	`invoiceId` text NOT NULL,
+	`description` text NOT NULL,
+	`quantity` integer NOT NULL,
+	`unitPrice` integer NOT NULL,
+	`totalPrice` integer NOT NULL,
+	FOREIGN KEY (`invoiceId`) REFERENCES `Invoice`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
 CREATE TABLE `Message` (
 	`id` text PRIMARY KEY NOT NULL,
 	`chatId` text NOT NULL,

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   sqliteTable,
   text,
@@ -5,6 +6,7 @@ import {
   blob,
   foreignKey,
   primaryKey,
+  index,
 } from 'drizzle-orm/sqlite-core';
 import type { InferSelectModel } from 'drizzle-orm';
 
@@ -99,3 +101,33 @@ export const suggestion = sqliteTable(
 );
 
 export type Suggestion = InferSelectModel<typeof suggestion>;
+
+export const invoice = sqliteTable('Invoice', {
+  id: text('id').primaryKey().notNull(),
+  documentId: text('documentId').notNull(),
+  vendorName: text('vendorName').notNull(),
+  customerName: text('customerName').notNull(),
+  invoiceNumber: text('invoiceNumber').notNull(),
+  invoiceDate: integer('invoiceDate', { mode: 'timestamp' }).notNull(),
+  dueDate: integer('dueDate', { mode: 'timestamp' }).notNull(),
+  totalAmount: integer('totalAmount').notNull(), // Store as cents
+  currency: text('currency').notNull().default('USD'),
+  createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updatedAt', { mode: 'timestamp' }).notNull(),
+  lastEditedBy: text('lastEditedBy'),
+});
+
+export type Invoice = InferSelectModel<typeof invoice>;
+
+export const invoiceLineItem = sqliteTable('InvoiceLineItem', {
+  id: text('id').primaryKey().notNull(),
+  invoiceId: text('invoiceId')
+    .notNull()
+    .references(() => invoice.id),
+  description: text('description').notNull(),
+  quantity: integer('quantity').notNull(),
+  unitPrice: integer('unitPrice').notNull(), // Store as cents
+  totalPrice: integer('totalPrice').notNull(), // Store as cents
+});
+
+export type InvoiceLineItem = InferSelectModel<typeof invoiceLineItem>;
