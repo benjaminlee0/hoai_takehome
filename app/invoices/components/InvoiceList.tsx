@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { format } from 'date-fns';
-import { ChevronUpIcon, ChevronDownIcon } from 'lucide-react';
+import { ChevronUpIcon, ChevronDownIcon, Trash2 } from 'lucide-react';
 import type { Invoice } from '@/lib/db/schema';
 import { getInvoices } from '../actions';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useRouter } from 'next/navigation';
+import { DeleteInvoiceButton } from './DeleteInvoiceButton';
 
 interface InvoiceListProps {
   initialData: {
@@ -74,6 +75,14 @@ export function InvoiceList({ initialData }: InvoiceListProps) {
     setIsLoading(false);
   };
 
+  const handleRowClick = (e: React.MouseEvent, invoiceId: string) => {
+    // Don't navigate if clicking the delete button
+    if ((e.target as HTMLElement).closest('.delete-button')) {
+      return;
+    }
+    router.push(`/invoices/${invoiceId}`);
+  };
+
   return (
     <div className="space-y-4">
       <Table>
@@ -115,6 +124,7 @@ export function InvoiceList({ initialData }: InvoiceListProps) {
                 )}
               </Button>
             </TableHead>
+            <TableHead className="w-[100px]">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -122,7 +132,7 @@ export function InvoiceList({ initialData }: InvoiceListProps) {
             <TableRow
               key={invoice.id}
               className="cursor-pointer hover:bg-muted/50"
-              onClick={() => router.push(`/invoices/${invoice.id}`)}
+              onClick={(e) => handleRowClick(e, invoice.id)}
             >
               <TableCell>{invoice.vendorName}</TableCell>
               <TableCell>
@@ -130,6 +140,19 @@ export function InvoiceList({ initialData }: InvoiceListProps) {
               </TableCell>
               <TableCell>
                 {invoice.currency} {(invoice.totalAmount / 100).toFixed(2)}
+              </TableCell>
+              <TableCell className="delete-button">
+                <DeleteInvoiceButton 
+                  invoiceId={invoice.id} 
+                  onDeleted={() => {
+                    // Remove the invoice from the list
+                    setData(prev => ({
+                      ...prev,
+                      invoices: prev.invoices.filter(inv => inv.id !== invoice.id),
+                      totalCount: prev.totalCount - 1
+                    }));
+                  }}
+                />
               </TableCell>
             </TableRow>
           ))}

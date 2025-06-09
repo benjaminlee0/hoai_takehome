@@ -155,6 +155,7 @@ function PureMultimodalInput({
         const { url, pathname, contentType } = data;
 
         return {
+          content: url,
           url,
           name: pathname,
           contentType: contentType,
@@ -233,7 +234,7 @@ function PureMultimodalInput({
 
       <Textarea
         ref={textareaRef}
-        placeholder="Send a message..."
+        placeholder="Upload an invoice"
         value={input}
         onChange={handleInput}
         className={cx(

@@ -54,10 +54,10 @@ const PurePreviewMessage = ({
       >
         <div
           className={cn(
-            'flex gap-4 w-full group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl',
+            'flex gap-4 w-full',
             {
               'w-full': mode === 'edit',
-              'group-data-[role=user]/message:w-fit': mode !== 'edit',
+              'justify-end': message.role === 'user' && mode !== 'edit',
             },
           )}
         >
@@ -69,7 +69,9 @@ const PurePreviewMessage = ({
             </div>
           )}
 
-          <div className="flex flex-col gap-4 w-full">
+          <div className={cn('flex flex-col gap-4', {
+            'max-w-2xl': message.role === 'user' && mode !== 'edit'
+          })}>
             {message.experimental_attachments && (
               <div className="flex flex-row justify-end gap-2">
                 {message.experimental_attachments.map((attachment) => (
@@ -109,12 +111,15 @@ const PurePreviewMessage = ({
 
                 <div
                   className={cn('flex flex-col', {
-                    'bg-secondary text-secondary-foreground px-3 py-2 rounded-xl':
+                    'bg-blue-600 dark:bg-blue-500 text-white px-3 py-2 rounded-xl':
                       message.role === 'user',
                     'text-muted-foreground dark:text-foreground': message.role === 'assistant'
                   })}
                 >
-                  <div className="prose dark:prose-invert max-w-none break-words">
+                  <div className={cn('prose max-w-none break-words', {
+                    'prose-p:text-white prose-headings:text-white prose-a:text-white prose-strong:text-white': message.role === 'user',
+                    'dark:prose-invert': message.role === 'assistant'
+                  })}>
                     <Markdown>{message.content as string}</Markdown>
                   </div>
                 </div>
@@ -250,27 +255,21 @@ export const ThinkingMessage = () => {
     >
       <div
         className={cx(
-          'flex gap-4 group-data-[role=user]/message:px-3 w-full group-data-[role=user]/message:w-fit group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl group-data-[role=user]/message:py-2 rounded-xl',
+          'flex gap-4 w-full',
           {
             'group-data-[role=user]/message:bg-muted': true,
           },
         )}
       >
-        <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border">
+        <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border bg-background">
           <div className="animate-spin">
             <SparklesIcon size={14} />
           </div>
         </div>
 
         <div className="flex flex-col gap-2 w-full">
-          <div className="flex flex-col gap-4 text-muted-foreground">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5, repeat: Infinity, repeatType: "reverse" }}
-            >
-              Analyzing invoice document...
-            </motion.div>
+          <div className="flex flex-col gap-4 text-muted-foreground dark:text-foreground">
+            Analyzing invoice document...
           </div>
         </div>
       </div>

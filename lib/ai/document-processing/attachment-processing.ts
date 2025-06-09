@@ -1,155 +1,196 @@
-import { ProcessedAttachment, AttachmentType, DocumentType } from './types';
+import { createWorker } from 'tesseract.js';
+import { Attachment, Message } from '@/lib/types';
+import { ProcessedAttachment, AttachmentType } from './types';
 import { generateUUID } from '@/lib/utils';
 import { saveDocument } from '@/lib/db/queries';
-import { Message } from 'ai';
-import { InvoiceVerificationService } from '../services/invoice-verification.service';
-import { InvoiceExtractionService } from '../services/invoice-extraction.service';
 
-// Initialize services lazily
-let invoiceVerification: InvoiceVerificationService | null = null;
-let invoiceExtraction: InvoiceExtractionService | null = null;
+/**
+ * Extract content from an attachment's various possible content fields
+ */
+function getAttachmentContent(att: Attachment): Buffer {
+  try {
+    // Handle Buffer or ArrayBufferView content
+    if (att.content) {
+      if (Buffer.isBuffer(att.content)) {
+        return att.content;
+      }
+      if (ArrayBuffer.isView(att.content)) {
+        return Buffer.from(att.content.buffer, att.content.byteOffset, att.content.byteLength);
+      }
+      if (typeof att.content === 'string' && att.content.includes('base64,')) {
+        return Buffer.from(att.content.split('base64,')[1], 'base64');
+      }
+    }
 
-function getInvoiceVerification(): InvoiceVerificationService {
-  if (!invoiceVerification) {
-    invoiceVerification = new InvoiceVerificationService();
+    // Handle URL with base64 data
+    if (att.url && att.url.includes('base64,')) {
+      return Buffer.from(att.url.split('base64,')[1], 'base64');
+    }
+
+    throw new Error(`Could not extract content from attachment: ${att.name || 'unnamed'}`);
+  } catch (error) {
+    console.error('Error extracting content:', error);
+    throw new Error(`Failed to process attachment content: ${att.name || 'unnamed'}`);
   }
-  return invoiceVerification;
 }
 
-function getInvoiceExtraction(): InvoiceExtractionService {
-  if (!invoiceExtraction) {
-    invoiceExtraction = new InvoiceExtractionService();
+/**
+ * Process a PDF buffer and extract its text content
+ */
+async function processPdfContent(buffer: Buffer): Promise<string> {
+  try {
+    const pdfParse = (await import('pdf-parse')).default;
+    const data = await pdfParse(buffer, {
+      max: 0, // No page limit
+      pagerender: undefined, // Use default renderer
+      version: 'v1.10.100' // Use a stable version
+    });
+
+    if (!data || typeof data.text !== 'string') {
+      throw new Error('Invalid PDF content structure');
+    }
+
+    const text = data.text.trim();
+    if (!text) {
+      throw new Error('PDF content is empty');
+    }
+
+    return text;
+  } catch (error) {
+    console.error('Error processing PDF:', error);
+    throw new Error('Could not extract text from PDF. Please ensure the file is a valid PDF with text content.');
   }
-  return invoiceExtraction;
 }
 
-function getDocumentKind(type: DocumentType): "text" | "code" | "sheet" | "image" {
-  return type === 'pdf' ? 'text' : 'image';
+/**
+ * Process an image buffer using Tesseract OCR
+ */
+async function processImageContent(buffer: Buffer): Promise<string> {
+  try {
+    const worker = await createWorker('eng');
+    
+    const { data: { text } } = await worker.recognize(buffer);
+    await worker.terminate();
+
+    const cleanedText = text.trim();
+    if (!cleanedText) {
+      throw new Error('No text could be extracted from the image');
+    }
+
+    return cleanedText;
+  } catch (error) {
+    console.error('Error processing image:', error);
+    throw new Error('Could not extract text from image. Please ensure the image is clear and contains readable text.');
+  }
+}
+
+/**
+ * Determine if we should process this as an invoice based on user message
+ */
+function shouldProcessInvoice(message: Message): boolean {
+  const text = String(message.content).toLowerCase();
+  return text.includes('invoice') || 
+         text.includes('bill') || 
+         text.includes('receipt') ||
+         text.includes('process this');
+}
+
+/**
+ * Get the attachment type based on content type
+ */
+function getAttachmentType(contentType: string): AttachmentType {
+  const type = contentType.toLowerCase();
+  
+  if (type.includes('pdf')) {
+    return 'pdf';
+  }
+  if (type.includes('image')) {
+    return 'image';
+  }
+  if (type.includes('text')) {
+    return 'text';
+  }
+  return 'unknown';
+}
+
+/**
+ * Save the processed document to the database
+ */
+export async function saveProcessedDocument(attachment: ProcessedAttachment, userId: string): Promise<string> {
+  try {
+    // Only save if shouldSaveDocument is true
+    if (!attachment.shouldSaveDocument) {
+      return attachment.id;
+    }
+
+    await saveDocument({
+      id: attachment.id,
+      title: attachment.name || 'Untitled Document',
+      kind: 'text',
+      content: attachment.content,
+      userId: userId,
+      createdAt: new Date()
+    });
+    return attachment.id;
+  } catch (error) {
+    console.error('Error saving document:', error);
+    throw new Error('Failed to save document to database');
+  }
 }
 
 /**
  * Process attachments and extract their content
  */
-export async function processAttachments(attachments: any[], userMessage: Message): Promise<ProcessedAttachment[]> {
+export async function processAttachments(
+  attachments: Attachment[], 
+  userMessage: Message
+): Promise<ProcessedAttachment[]> {
+  const isInvoiceRequested = shouldProcessInvoice(userMessage);
+  
   const processedAttachments = await Promise.all(
-    attachments.map(async (att): Promise<ProcessedAttachment | null> => {
+    attachments.map(async (att): Promise<ProcessedAttachment> => {
       try {
-        const base64 = att.url.split(',')[1];
-        const buffer = Buffer.from(base64, 'base64');
+        console.log('Processing attachment:', {
+          name: att.name,
+          contentType: att.contentType,
+          hasContent: !!att.content,
+          hasUrl: !!att.url
+        });
+
+        const buffer = getAttachmentContent(att);
+        const type = getAttachmentType(att.contentType);
         
-        if (att.contentType === 'application/pdf' || att.contentType.startsWith('image/')) {
-          const documentType: DocumentType = att.contentType === 'application/pdf' ? 'pdf' : 'image';
-          
-          // First get the raw text content
-          let textContent = '';
-          if (documentType === 'pdf') {
-            const pdf = (await import('pdf-parse')).default;
-            const data = await pdf(buffer);
-            textContent = data.text.trim();
-            
-            // Clean up the text content
-            textContent = textContent
-              .replace(/\r\n/g, '\n') // Normalize line endings
-              .replace(/\n{3,}/g, '\n\n') // Remove excessive newlines
-              .replace(/\s+/g, ' ') // Normalize whitespace
-              .trim();
-              
-            // Only log a preview to avoid polluting the stream
-            if (textContent) {
-              const preview = textContent.substring(0, 200);
-              console.log('Extracted text preview:', preview + (textContent.length > 200 ? '...' : ''));
-            }
-          }
-
-          // Create base document with type and content
-          const baseDocument: ProcessedAttachment = {
-            type: documentType,
-            content: textContent || att.url,
-            originalType: att.contentType as AttachmentType
-          };
-
-          // Only proceed with non-empty content
-          if (!textContent) {
-            return {
-              ...baseDocument,
-              error: 'Could not extract text content from document.'
-            };
-          }
-
-          try {
-            // For file uploads, go straight to Document AI processing
-            const extractedData = await getInvoiceExtraction().extractInvoiceData(buffer, att.contentType);
-
-            // If we get here, Document AI validation passed
-            return {
-              ...baseDocument,
-              content: textContent, // Keep original text content
-              extractedInvoiceData: extractedData
-            };
-          } catch (docAiError) {
-            const errorMessage = docAiError instanceof Error ? docAiError.message : 'Failed to process invoice with Document AI';
-            console.error('Document AI processing failed:', {
-              error: errorMessage,
-              stack: docAiError instanceof Error ? docAiError.stack : undefined
-            });
-            
-            // If Document AI fails, try LLM verification as fallback
-            try {
-              const shouldProcess = await getInvoiceVerification().verifyInvoice(textContent, userMessage);
-              if (!shouldProcess) {
-                return {
-                  ...baseDocument,
-                  error: 'This document is not an invoice or no processing was requested.'
-                };
-              }
-              // If LLM says it's an invoice but Document AI failed, return the error
-              return {
-                ...baseDocument,
-                error: `Document appears to be an invoice but Document AI processing failed: ${errorMessage}`
-              };
-            } catch (llmError) {
-              return {
-                ...baseDocument,
-                error: errorMessage
-              };
-            }
-          }
+        let content = '';
+        
+        switch (type) {
+          case 'pdf':
+            content = await processPdfContent(buffer);
+            break;
+          case 'image':
+            content = await processImageContent(buffer);
+            break;
+          case 'text':
+            content = buffer.toString('utf-8');
+            break;
+          default:
+            throw new Error(`Unsupported file type: ${att.contentType}`);
         }
-        return null;
-      } catch (err) {
-        console.error('Failed to process attachment:', err);
-        return null;
+
+        return {
+          id: att.id || generateUUID(),
+          name: att.name || 'Untitled',
+          contentType: att.contentType,
+          type,
+          content,
+          isExtractionNeeded: isInvoiceRequested,
+          shouldSaveDocument: isInvoiceRequested
+        };
+      } catch (error) {
+        console.error('Error processing attachment:', error);
+        throw error;
       }
     })
   );
 
-  return processedAttachments.filter((att): att is ProcessedAttachment => att !== null);
-}
-
-/**
- * Save a document to the database
- */
-export async function saveProcessedDocument(
-  document: ProcessedAttachment,
-  userId: string,
-  filename?: string
-) {
-  const documentId = generateUUID();
-  const title = filename || `${document.type.charAt(0).toUpperCase() + document.type.slice(1)} Document`;
-  
-  // If we have extracted invoice data, save it as structured content
-  const content = document.extractedInvoiceData 
-    ? JSON.stringify(document.extractedInvoiceData, null, 2)
-    : document.content;
-
-  await saveDocument({
-    id: documentId,
-    title,
-    kind: getDocumentKind(document.type),
-    content,
-    userId,
-    createdAt: new Date()
-  });
-
-  return documentId;
+  return processedAttachments;
 } 

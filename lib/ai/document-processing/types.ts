@@ -1,56 +1,37 @@
-export type AttachmentType = 'application/pdf' | 'image/jpeg' | 'image/png';
-
-export type DocumentType = 'pdf' | 'image';
-
-export interface TableCell {
-  content: string;
-  rowIndex: number;
-  columnIndex: number;
-  confidence: number;
-}
-
-export interface TableStructure {
-  headers: {
-    pos: number;
-    quantity: number;
-    description: number;
-    unitPrice: number;
-    total: number;
-  };
-  rows: Array<{
-    cells: TableCell[];
-    position?: number;
-    quantity?: number;
-    unitPrice?: number;
-    total?: number;
-  }>;
-}
+export type DocumentType = 'invoice' | 'image' | 'pdf';
+export type AttachmentType = 'invoice' | 'image' | 'pdf' | 'text' | 'unknown';
 
 export interface ProcessedAttachment {
-  type: DocumentType;
+  id: string;
+  name: string;
+  contentType: string;
+  type: AttachmentType;
   content: string;
-  originalType: AttachmentType;
-  extractedInvoiceData?: ExtractedInvoiceData;
-  error?: string;
+  isExtractionNeeded: boolean;
+  shouldSaveDocument: boolean;
 }
 
 export interface ExtractedInvoiceData {
+  id: string;
+  documentId: string;
   vendorName: string;
   customerName: string;
   invoiceNumber: string;
-  invoiceDate: string;
-  dueDate: string;
+  invoiceDate: Date;
+  dueDate: Date;
   totalAmount: number;
-  currency?: string;
-  lineItems: Array<{
-    description: string;
-    quantity: number;
-    unitPrice: number;
-    totalPrice: number;
-  }>;
+  lineItems: InvoiceLineItem[];
+  createdAt: Date;
+  updatedAt: Date;
+  lastEditedBy?: string;
+  status: 'pending' | 'verified' | 'needs_review';
 }
 
-export interface ValidationResult {
-  isValid: boolean;
-  error?: string;
+export interface InvoiceLineItem {
+  id: string;
+  invoiceId: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
 } 

@@ -6,6 +6,8 @@ import type {
 } from 'ai';
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { Message as AIMessage } from 'ai';
+import { Message as CustomMessage, TextPart, MessageContent, ToolCallPart, ToolResultPart } from './types';
 
 import type { Message as DBMessage, Document } from '@/lib/db/schema';
 
@@ -213,9 +215,13 @@ export function sanitizeUIMessages(messages: Array<Message>): Array<Message> {
   );
 }
 
-export function getMostRecentUserMessage(messages: Array<Message>) {
-  const userMessages = messages.filter((message) => message.role === 'user');
-  return userMessages.at(-1);
+export function getMostRecentUserMessage(messages: Array<Message>): Message | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      return messages[i];
+    }
+  }
+  return null;
 }
 
 export function getDocumentTimestampByIndex(
@@ -226,4 +232,26 @@ export function getDocumentTimestampByIndex(
   if (index > documents.length) return new Date();
 
   return documents[index].createdAt;
+}
+
+export function convertToAIMessage(message: Message): AIMessage {
+  const { chatId, createdAt, ...rest } = message;
+  return {
+    ...rest,
+    content: Array.isArray(message.content) 
+      ? message.content.map(part => {
+          if (part.type === 'text') {
+            return part.text;
+          }
+          return '';
+        }).join('')
+      : message.content
+  };
+}
+
+export function convertToTextParts(content: string | MessageContent): MessageContent {
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }];
+  }
+  return content;
 }

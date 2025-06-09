@@ -3,7 +3,7 @@
 import type { User } from 'next-auth';
 import { useRouter } from 'next/navigation';
 
-import { PlusIcon, FileIcon } from '@/components/icons';
+import { PlusIcon, FileIcon, ChartIcon } from '@/components/icons';
 import { SidebarHistory } from '@/components/sidebar-history';
 import { SidebarUserNav } from '@/components/sidebar-user-nav';
 import { Button } from '@/components/ui/button';
@@ -66,6 +66,16 @@ export function AppSidebar({ user }: { user: User | undefined }) {
             >
               <FileIcon size={16} />
               <span>Invoices</span>
+            </Link>
+            <Link
+              href="/stats"
+              onClick={() => {
+                setOpenMobile(false);
+              }}
+              className="flex flex-row gap-2 items-center px-2 py-1.5 text-sm hover:bg-muted rounded-md cursor-pointer"
+            >
+              <ChartIcon size={16} />
+              <span>Usage Stats</span>
             </Link>
           </div>
         </SidebarMenu>

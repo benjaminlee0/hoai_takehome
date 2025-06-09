@@ -8,16 +8,21 @@ import {
 
 export const DEFAULT_CHAT_MODEL: string = 'chat-model-large';
 
+// Configure OpenAI with token tracking
+const openaiWithTracking = (modelId: string) => openai(modelId, {
+  logprobs: true, // Enable token tracking
+});
+
 export const myProvider = customProvider({
   languageModels: {
-    'chat-model-small': openai('gpt-4o-mini'),
-    'chat-model-large': openai('gpt-4o'),
+    'chat-model-small': openaiWithTracking('gpt-4o-mini'),
+    'chat-model-large': openaiWithTracking('gpt-4o'),
     'chat-model-reasoning': wrapLanguageModel({
       model: fireworks('accounts/fireworks/models/deepseek-r1'),
       middleware: extractReasoningMiddleware({ tagName: 'think' }),
     }),
-    'title-model': openai('gpt-4o-mini'),
-    'block-model': openai('gpt-4o-mini'),
+    'title-model': openaiWithTracking('gpt-4o-mini'),
+    'block-model': openaiWithTracking('gpt-4o-mini'),
   },
   imageModels: {
     'small-model': openai.image('dall-e-2'),

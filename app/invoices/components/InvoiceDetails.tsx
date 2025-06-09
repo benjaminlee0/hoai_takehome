@@ -149,11 +149,22 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
                   <TableCell>
                     <Input
                       type="number"
+                      min="0"
+                      step="1"
                       value={item.quantity}
                       onChange={(e) => {
                         const newLineItems = [...invoice.lineItems];
-                        newLineItems[index] = { ...item, quantity: parseInt(e.target.value) };
-                        setInvoice({ ...invoice, lineItems: newLineItems });
+                        const quantity = parseInt(e.target.value) || 0;
+                        newLineItems[index] = { 
+                          ...item, 
+                          quantity,
+                          totalPrice: Math.round(item.unitPrice * quantity)
+                        };
+                        setInvoice({ 
+                          ...invoice, 
+                          lineItems: newLineItems,
+                          totalAmount: newLineItems.reduce((sum, item) => sum + item.totalPrice, 0)
+                        });
                       }}
                       disabled={!isEditing}
                     />
@@ -161,11 +172,22 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
                   <TableCell>
                     <Input
                       type="number"
+                      step="0.01"
+                      min="0"
                       value={(item.unitPrice / 100).toFixed(2)}
                       onChange={(e) => {
                         const newLineItems = [...invoice.lineItems];
-                        newLineItems[index] = { ...item, unitPrice: Math.round(parseFloat(e.target.value) * 100) };
-                        setInvoice({ ...invoice, lineItems: newLineItems });
+                        const value = e.target.value === '' ? '0' : e.target.value;
+                        newLineItems[index] = { 
+                          ...item, 
+                          unitPrice: Math.round(parseFloat(value) * 100),
+                          totalPrice: Math.round(parseFloat(value) * 100 * item.quantity)
+                        };
+                        setInvoice({ 
+                          ...invoice, 
+                          lineItems: newLineItems,
+                          totalAmount: newLineItems.reduce((sum, item) => sum + item.totalPrice, 0)
+                        });
                       }}
                       disabled={!isEditing}
                     />

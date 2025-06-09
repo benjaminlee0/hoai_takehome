@@ -1,5 +1,4 @@
 import {
-  type Message,
   createDataStreamResponse,
   smoothStream,
   streamText,
@@ -8,6 +7,7 @@ import {
 import { auth } from '@/app/(auth)/auth';
 import { myProvider } from '@/lib/ai/models';
 import { systemPrompt } from '@/lib/ai/prompts';
+import { trackTokenUsage } from '@/lib/ai/token-tracking';
 import {
   deleteChatById,
   getChatById,
@@ -18,7 +18,10 @@ import {
   generateUUID,
   getMostRecentUserMessage,
   sanitizeResponseMessages,
+  convertToTextParts,
+  convertToAIMessage,
 } from '@/lib/utils';
+import { Message } from '@/lib/types';
 
 import { generateTitleFromUserMessage } from '../../(chat)/actions';
 import { createDocument } from '@/lib/ai/tools/create-document';
@@ -26,7 +29,13 @@ import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
 import { saveExtractedInvoice } from '@/lib/ai/tools/save-invoice';
-import { processAttachments, saveProcessedDocument } from '@/lib/ai/document-processing/attachment-processing';
+import { 
+  processAttachments, 
+  saveProcessedDocument 
+} from '@/lib/ai/document-processing/attachment-processing';
+import { 
+  formatDocumentContent
+} from '@/lib/ai/document-processing/invoice-processing';
 
 export const maxDuration = 60;
 
@@ -43,17 +52,13 @@ export async function POST(request: Request) {
   const lastMessage = messages[messages.length - 1];
   const parsedAttachments = lastMessage.experimental_attachments || [];
 
+  console.log('Received attachments:', JSON.stringify(parsedAttachments, null, 2));
+
   const session = await auth();
 
   if (!session || !session.user || !session.user.id) {
     return new Response('Unauthorized', { status: 401 });
   }
-
-  // Add expires field required by Session type
-  const fullSession = {
-    ...session,
-    expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
-  };
 
   const userMessage = getMostRecentUserMessage(messages);
 
@@ -68,108 +73,59 @@ export async function POST(request: Request) {
     await saveChat({ id, userId: session.user.id, title });
   }
 
+  // Format user message content as text parts
+  const formattedUserMessage = {
+    ...userMessage,
+    content: convertToTextParts(userMessage.content),
+    createdAt: new Date(),
+    chatId: id
+  };
+
   await saveMessages({
-    messages: [{ ...userMessage, createdAt: new Date(), chatId: id }],
+    messages: [formattedUserMessage],
   });
 
   let updatedMessages = [...messages];
   
   if (parsedAttachments.length > 0) {
-    // Start with initial processing message
-    const processingMessage = {
-      id: generateUUID(),
-      role: 'assistant' as const,
-      content: 'Analyzing invoice document...',
-      createdAt: new Date(),
-      chatId: id
-    };
-    
-    await saveMessages({
-      messages: [processingMessage]
+    // Log the structure of each attachment
+    parsedAttachments.forEach((att, i) => {
+      console.log(`Attachment ${i} structure:`, {
+        id: att.id,
+        contentType: att.contentType,
+        name: att.name,
+        size: att.size,
+        hasContent: !!att.content,
+        contentStart: att.content ? att.content.substring(0, 50) + '...' : 'no content'
+      });
     });
-    updatedMessages = [...updatedMessages, processingMessage];
 
     const processedAttachments = await processAttachments(parsedAttachments, userMessage);
     
     for (const attachment of processedAttachments) {
       const documentId = await saveProcessedDocument(attachment, session.user.id);
-      
-      // If we have invoice data from Document AI, add it as a new message for processing
-      if (attachment.extractedInvoiceData) {
-        const { lineItems = [], totalAmount, currency = '€' } = attachment.extractedInvoiceData;
-        
-        // Update processing status
-        const statusMessage = {
-          id: generateUUID(),
-          role: 'assistant' as const,
-          content: 'Invoice analyzed successfully. Saving extracted data...',
-          createdAt: new Date(),
-          chatId: id
-        };
-        
-        await saveMessages({
-          messages: [statusMessage]
-        });
-        updatedMessages = [...updatedMessages, statusMessage];
-        
-        // Format line items nicely
-        const formattedLineItems = lineItems.map(item => {
-          const unitPrice = item.unitPrice;
-          const totalPrice = item.totalPrice;
-          
-          return `Description: ${item.description}\n` +
-                 `Quantity: ${item.quantity} × Unit Price: ${currency}${unitPrice.toFixed(2)} = ` +
-                 `Total: ${currency}${totalPrice.toFixed(2)}`;
-        }).join('\n\n');
 
-        const extractionMessage = {
-          id: generateUUID(),
-          role: 'assistant' as const,
-          content: lineItems.length > 0 ? 
-            'Line Items:\n\n' +
-            formattedLineItems + '\n\n' +
-            `The total amount matches the sum of all line item totals. The invoice data has been successfully saved to the database.`
-            : 'No line items found in the invoice.',
-          createdAt: new Date(),
-          chatId: id
-        };
+      // Only create document message if we actually saved the document or if it's a non-invoice
+      const documentMessage = {
+        id: generateUUID(),
+        role: 'assistant' as const,
+        content: attachment.content,
+        createdAt: new Date(),
+        chatId: id,
+        ...(documentId && { documentId }) // Only include documentId if we saved the document
+      };
 
-        await saveMessages({
-          messages: [extractionMessage]
-        });
+      await saveMessages({
+        messages: [documentMessage]
+      });
 
-        updatedMessages = [...updatedMessages, extractionMessage];
-      } else if (attachment.error) {
-        // If Document AI failed, add error message and prevent invoice saving
-        const errorMessage = {
-          id: generateUUID(),
-          role: 'assistant' as const,
-          content: `Failed to process document with Document AI: ${attachment.error}\nPlease ensure the document is a valid invoice and try again.`,
-          createdAt: new Date(),
-          chatId: id
-        };
-
-        await saveMessages({
-          messages: [errorMessage]
-        });
-
-        updatedMessages = [...updatedMessages, errorMessage];
-      } else {
-        // Update the existing message with document content
-        const messageIndex = updatedMessages.findIndex(msg => msg.id === userMessage.id);
-        if (messageIndex !== -1) {
-          updatedMessages[messageIndex] = {
-            ...updatedMessages[messageIndex],
-            content: `${userMessage.content}\n\nDocument ID: ${documentId}\nType: ${attachment.type}\nContent:\n${attachment.content}`
-          };
-        }
-      }
+      updatedMessages = [...updatedMessages, documentMessage];
     }
   }
 
   const cleanedMessages = updatedMessages.map((msg) => {
     const { experimental_attachments, ...rest } = msg;
-    return rest;
+    return convertToAIMessage(rest);
   });
 
   return createDataStreamResponse({
@@ -191,44 +147,27 @@ export async function POST(request: Request) {
               ],
         experimental_transform: smoothStream({ chunking: 'word' }),
         experimental_generateMessageId: generateUUID,
+        onFinish: async ({ usage }) => {
+          if (session.user?.id && usage) {
+            try {
+              await trackTokenUsage(generateUUID(), usage);
+            } catch (error) {
+              console.error('Failed to track token usage:', error);
+            }
+          }
+        },
         tools: {
           getWeather,
-          createDocument: createDocument({ session: fullSession, dataStream }),
-          updateDocument: updateDocument({ session: fullSession, dataStream }),
+          createDocument: createDocument({ session, dataStream }),
+          updateDocument: updateDocument({ session, dataStream }),
           requestSuggestions: requestSuggestions({
-            session: fullSession,
+            session,
             dataStream,
           }),
           saveExtractedInvoice: saveExtractedInvoice({
-            session: fullSession,
+            session,
             dataStream,
           }),
-        },
-        onFinish: async ({ response, reasoning }) => {
-          if (session.user?.id) {
-            try {
-              const sanitizedResponseMessages = sanitizeResponseMessages({
-                messages: response.messages,
-                reasoning,
-              });
-
-              if (sanitizedResponseMessages.length > 0) {
-                await saveMessages({
-                  messages: sanitizedResponseMessages.map((message) => {
-                    return {
-                      id: message.id,
-                      chatId: id,
-                      role: message.role,
-                      content: message.content,
-                      createdAt: new Date(),
-                    };
-                  }),
-                });
-              }
-            } catch (error) {
-              console.error('Failed to save chat', error);
-            }
-          }
         },
         experimental_telemetry: {
           isEnabled: true,

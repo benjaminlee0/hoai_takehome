@@ -14,13 +14,11 @@ interface SuggestedActionsProps {
 }
 
 function PureSuggestedActions({ chatId, append }: SuggestedActionsProps) {
-  const suggestedActions = [
-    {
-      title: 'Upload',
-      label: 'an invoice to get started',
-      action: 'I have an invoice to upload',
-    }
-  ];
+  const suggestedActions: Array<{
+    title: string;
+    label: string;
+    action: string;
+  }> = [];
 
   return (
     <div className="w-full">

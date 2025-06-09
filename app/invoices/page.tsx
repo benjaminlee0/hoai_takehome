@@ -5,11 +5,14 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 
 interface InvoicesPageProps {
-  searchParams: { page?: string };
+  searchParams: Promise<{
+    page?: string;
+  }>;
 }
 
 export default async function InvoicesPage({ searchParams }: InvoicesPageProps) {
-  const page = searchParams.page ? parseInt(searchParams.page) : 1;
+  const params = await searchParams;
+  const page = params.page ? parseInt(params.page) : 1;
   const data = await getInvoices(page);
 
   return (

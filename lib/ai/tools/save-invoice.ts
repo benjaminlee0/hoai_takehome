@@ -1,80 +1,153 @@
-import type { DataStreamWriter } from 'ai';
-import type { Session } from '@auth/core/types';
-import { saveInvoice } from '@/lib/db/queries';
+import { type DataStreamWriter, tool } from 'ai';
+import { type Session } from 'next-auth';
+import { saveInvoice, findDuplicateInvoice } from '@/lib/db/queries';
 import { generateUUID } from '@/lib/utils';
 import { z } from 'zod';
-import { tool } from 'ai';
+import { trackTokenUsage, getCachedPrompt, cachePrompt } from '@/lib/ai/token-tracking';
 
 const lineItemSchema = z.object({
-  description: z.string().describe('Description of the item'),
-  quantity: z.number().describe('Quantity of items'),
-  unitPrice: z.number().describe('Price per unit'),
-  totalPrice: z.number().describe('Total price for this line item')
+  description: z.string(),
+  quantity: z.number(),
+  unitPrice: z.number(),
+  total: z.number(),
 });
 
-const invoiceSchema = z.object({
-  documentId: z.string().describe('The ID of the document containing the invoice'),
-  vendorName: z.string().describe('Name of the vendor/seller'),
-  customerName: z.string().describe('Name of the customer/buyer'),
-  invoiceNumber: z.string().describe('Unique invoice reference number'),
-  invoiceDate: z.string().describe('Date when invoice was issued (YYYY-MM-DD)'),
-  dueDate: z.string().describe('Date when payment is due (YYYY-MM-DD)'),
-  totalAmount: z.number().describe('Total amount of the invoice'),
-  currency: z.string().optional().describe('Currency code (e.g., EUR, USD)'),
-  lineItems: z.array(lineItemSchema),
-  documentAiProcessed: z.boolean().describe('Whether this invoice was processed by Document AI')
-});
+interface ExtractedLineItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
 
-type InvoiceData = z.infer<typeof invoiceSchema>;
+interface DbLineItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
 
-export function saveExtractedInvoice({ session, dataStream }: { session: Session; dataStream: DataStreamWriter }) {
+interface SaveInvoiceToolProps {
+  session: Session | null;
+  dataStream: DataStreamWriter;
+}
+
+// Rough estimate of tokens per character (based on GPT tokenization)
+const TOKENS_PER_CHAR = 0.25;
+
+// Function to estimate tokens
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length * TOKENS_PER_CHAR);
+}
+
+export function saveExtractedInvoice({ session, dataStream }: SaveInvoiceToolProps) {
   return tool({
-    description: 'Save extracted invoice data to the database',
-    parameters: invoiceSchema,
-    execute: async (args: InvoiceData) => {
+    description: 'Save extracted invoice data to the database. First checks for duplicates before proceeding.',
+    parameters: z.object({
+      vendorName: z.string(),
+      customerName: z.string(),
+      invoiceNumber: z.string(),
+      invoiceDate: z.string(),
+      dueDate: z.string(),
+      currency: z.string().default('USD'),
+      totalAmount: z.number(),
+      lineItems: z.array(lineItemSchema),
+      documentId: z.string(),
+      prompt: z.string().optional(),
+    }),
+    execute: async ({
+      vendorName,
+      customerName,
+      invoiceNumber,
+      invoiceDate,
+      dueDate,
+      currency,
+      totalAmount,
+      lineItems,
+      documentId,
+      prompt,
+    }) => {
+      if (!session?.user?.id) {
+        throw new Error('User not authenticated');
+      }
+
       try {
-        if (!session.user?.id) {
-          throw new Error('User not authenticated');
+        // Generate invoice ID
+        const id = generateUUID();
+
+        // Convert total to cents for duplicate check
+        const totalAmountCents = Math.round(totalAmount * 100);
+
+        // Check for duplicate invoice first
+        const duplicateInvoice = await findDuplicateInvoice({
+          vendorName,
+          invoiceNumber,
+          totalAmount: totalAmountCents,
+        });
+
+        if (duplicateInvoice) {
+          return {
+            status: 'duplicate',
+            invoiceId: duplicateInvoice.id,
+            message: `Found duplicate invoice from ${duplicateInvoice.vendorName} with invoice number ${duplicateInvoice.invoiceNumber} and amount ${duplicateInvoice.totalAmount / 100} ${duplicateInvoice.currency}`,
+          };
         }
 
-        // Require Document AI processing
-        if (!args.documentAiProcessed) {
-          throw new Error('Invoice must be processed by Document AI before saving');
-        }
-
-        const { documentId, currency = 'EUR', documentAiProcessed, ...invoiceData } = args;
-        
-        // Save to database
-        await saveInvoice({
-          id: generateUUID(),
-          documentId,
-          vendorName: invoiceData.vendorName,
-          customerName: invoiceData.customerName,
-          invoiceNumber: invoiceData.invoiceNumber,
-          invoiceDate: new Date(invoiceData.invoiceDate),
-          dueDate: new Date(invoiceData.dueDate),
-          totalAmount: invoiceData.totalAmount,
+        // Estimate token usage
+        const inputText = JSON.stringify({
+          vendorName,
+          customerName,
+          invoiceNumber,
+          invoiceDate,
+          dueDate,
           currency,
-          lineItems: invoiceData.lineItems.map(item => ({
+          totalAmount,
+          lineItems,
+        });
+        
+        const promptTokens = prompt ? estimateTokens(prompt) : 0;
+        const completionTokens = estimateTokens(inputText);
+        const totalTokens = promptTokens + completionTokens;
+
+        // Track token usage
+        await trackTokenUsage(id, {
+          promptTokens,
+          completionTokens,
+          totalTokens,
+        });
+
+        // Cache prompt if provided
+        if (prompt) {
+          await cachePrompt(prompt, totalTokens);
+        }
+
+        // Save invoice with the generated ID
+        await saveInvoice({
+          id,
+          documentId,
+          vendorName,
+          customerName,
+          invoiceNumber,
+          invoiceDate: new Date(invoiceDate),
+          dueDate: new Date(dueDate),
+          totalAmount: totalAmountCents,
+          currency,
+          lineItems: lineItems.map(item => ({
             description: item.description,
             quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            totalPrice: item.totalPrice
+            unitPrice: Math.round(item.unitPrice * 100),
+            totalPrice: Math.round(item.total * 100),
           })),
-          lastEditedBy: session.user.id
         });
 
-        // Write success message as a proper JSON object
-        dataStream.writeData({
-          type: 'success',
-          content: `Invoice data saved for document ${documentId}`
-        });
-
-        return { success: true, documentId };
+        return {
+          status: 'success',
+          invoiceId: id,
+          message: 'Invoice saved successfully',
+        };
       } catch (error) {
-        console.error('Failed to save invoice:', error);
+        console.error('Error saving invoice:', error);
         throw error;
       }
-    }
+    },
   });
 } 

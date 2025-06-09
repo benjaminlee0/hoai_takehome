@@ -7,6 +7,7 @@ import {
   foreignKey,
   primaryKey,
   index,
+  real,
 } from 'drizzle-orm/sqlite-core';
 import type { InferSelectModel } from 'drizzle-orm';
 
@@ -131,3 +132,28 @@ export const invoiceLineItem = sqliteTable('InvoiceLineItem', {
 });
 
 export type InvoiceLineItem = InferSelectModel<typeof invoiceLineItem>;
+
+export const tokenUsage = sqliteTable('TokenUsage', {
+  id: text('id').primaryKey().notNull(),
+  invoiceId: text('invoiceId')
+    .notNull()
+    .references(() => invoice.id),
+  promptTokens: integer('promptTokens').notNull(),
+  completionTokens: integer('completionTokens').notNull(),
+  totalTokens: integer('totalTokens').notNull(),
+  estimatedCost: real('estimatedCost').notNull(), // in USD
+  createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+});
+
+export const promptCache = sqliteTable('PromptCache', {
+  id: text('id').primaryKey().notNull(),
+  prompt: text('prompt').notNull(),
+  hash: text('hash').notNull(),
+  tokenCount: integer('tokenCount').notNull(),
+  createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+  lastUsedAt: integer('lastUsedAt', { mode: 'timestamp' }).notNull(),
+  useCount: integer('useCount').notNull().default(1),
+});
+
+export type TokenUsage = InferSelectModel<typeof tokenUsage>;
+export type PromptCache = InferSelectModel<typeof promptCache>;

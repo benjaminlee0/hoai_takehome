@@ -409,7 +409,7 @@ export async function saveInvoice({
       throw new Error('Invoice was not saved successfully');
     }
 
-    return savedInvoice;
+    return id;
   } catch (error) {
     console.error('Error saving invoice:', error);
     throw error;
@@ -553,8 +553,54 @@ export async function getInvoiceById(id: string) {
 }
 
 export async function deleteInvoiceById(id: string) {
-  await db.transaction(async (tx) => {
-    await tx.delete(invoiceLineItem).where(eq(invoiceLineItem.invoiceId, id));
-    await tx.delete(invoice).where(eq(invoice.id, id));
+  db.transaction(() => {
+    db.delete(invoiceLineItem)
+      .where(eq(invoiceLineItem.invoiceId, id))
+      .run();
+    
+    db.delete(invoice)
+      .where(eq(invoice.id, id))
+      .run();
   });
+}
+
+interface FindDuplicateInvoiceProps {
+  vendorName: string;
+  invoiceNumber: string;
+  totalAmount: number;
+}
+
+export async function findDuplicateInvoice({
+  vendorName,
+  invoiceNumber,
+  totalAmount,
+}: FindDuplicateInvoiceProps) {
+  try {
+    console.log('Checking for duplicate invoice:', {
+      vendorName,
+      invoiceNumber,
+      totalAmount
+    });
+
+    const [existingInvoice] = await db
+      .select()
+      .from(invoice)
+      .where(
+        and(
+          eq(invoice.vendorName, vendorName),
+          eq(invoice.invoiceNumber, invoiceNumber),
+          eq(invoice.totalAmount, totalAmount)
+        )
+      )
+      .limit(1);
+
+    if (existingInvoice) {
+      console.log('Found duplicate invoice:', existingInvoice);
+    }
+
+    return existingInvoice;
+  } catch (error) {
+    console.error('Error checking for duplicate invoice:', error);
+    throw error;
+  }
 }
