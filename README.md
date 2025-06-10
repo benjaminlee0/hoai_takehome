@@ -13,17 +13,33 @@
 
 ## Model Providers
 
-This template ships with OpenAI `gpt-4o` as the default. However, with the [AI SDK](https://sdk.vercel.ai/docs), you can switch LLM providers to [OpenAI](https://openai.com), [Anthropic](https://anthropic.com), [Cohere](https://cohere.com/), and [many more](https://sdk.vercel.ai/providers/ai-sdk-providers) with just a few lines of code.
-
+This template uses OpenAI's GPT-4 model for invoice processing and analysis. You will need an OpenAI API key to run the application.
 
 ## Running locally
 
 You will need to use the environment variables [defined in `.env.example`](.env.example) to run Next.js AI Chatbot. 
 
+### Environment Setup
+
+1. Copy `.env.example` to `.env.local`
+2. Add your OpenAI API key to `.env.local`:
 ```bash
-pnpm install
-pnpm db:migrate
-pnpm dev
+OPENAI_API_KEY=your_api_key_here
 ```
+
+### Installation
+
+```bash
+# Install dependencies with legacy peer deps to handle React version conflicts
+npm install --legacy-peer-deps
+
+# Run database migrations
+npm run db:migrate
+
+# Start the development server
+npm run dev
+```
+
+> **Note**: We use `patch-package` to fix an issue with the `pdf-parse` library. The patch will be automatically applied during the installation process via the `postinstall` script.
 
 Your app template should now be running on [localhost:3000](http://localhost:3000/).

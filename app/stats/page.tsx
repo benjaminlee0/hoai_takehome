@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Card,
   CardContent,
@@ -8,6 +9,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { ChevronDownIcon } from '@/components/icons';
 
 interface TokenStats {
   cost: {
@@ -18,12 +21,15 @@ interface TokenStats {
   savings: {
     tokensSaved: number;
     totalCaches: number;
-    totalReuse: number;
+    totalUses: number;
+    cacheHits: number;
+    hitRate: number;
     estimatedCostSaved: string;
   };
 }
 
 export default function StatsPage() {
+  const router = useRouter();
   const [stats, setStats] = useState<TokenStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,21 +37,31 @@ export default function StatsPage() {
   useEffect(() => {
     async function fetchStats() {
       try {
+        console.log('UI - Fetching stats...');
         const response = await fetch('/api/stats');
         if (!response.ok) {
           throw new Error('Failed to fetch stats');
         }
         const data = await response.json();
+        console.log('UI - Received stats data:', data);
         setStats(data);
       } catch (err) {
+        console.error('UI - Error fetching stats:', err);
         setError(err instanceof Error ? err.message : 'An error occurred');
       } finally {
         setLoading(false);
       }
     }
 
-    fetchStats();
+    const intervalId = setInterval(fetchStats, 5000); // Refresh every 5 seconds
+    fetchStats(); // Initial fetch
+
+    return () => clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    console.log('UI - Current stats state:', stats);
+  }, [stats]);
 
   if (loading) {
     return <div className="p-8">Loading statistics...</div>;
@@ -61,7 +77,20 @@ export default function StatsPage() {
 
   return (
     <div className="p-8 space-y-8">
-      <h1 className="text-2xl font-bold mb-8">Token Usage Statistics</h1>
+      <div className="flex items-center gap-4 mb-8">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="flex items-center gap-2"
+          onClick={() => router.back()}
+        >
+          <div className="rotate-90">
+            <ChevronDownIcon size={16} />
+          </div>
+          Back
+        </Button>
+        <h1 className="text-2xl font-bold">Token Usage Statistics</h1>
+      </div>
       
       <div className="grid gap-8 md:grid-cols-2">
         <Card>
@@ -98,9 +127,7 @@ export default function StatsPage() {
             <div>
               <p className="text-sm font-medium">Cache Hit Rate</p>
               <p className="text-2xl font-bold">
-                {stats.savings.totalReuse > 0
-                  ? `${((stats.savings.totalReuse - stats.savings.totalCaches) / stats.savings.totalReuse * 100).toFixed(1)}%`
-                  : '0%'}
+                {`${stats.savings.hitRate.toFixed(1)}%`}
               </p>
             </div>
             <div>

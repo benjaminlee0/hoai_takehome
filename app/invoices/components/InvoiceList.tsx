@@ -195,4 +195,4 @@ export function InvoiceList({ initialData }: InvoiceListProps) {
       </div>
     </div>
   );
-} 
+}

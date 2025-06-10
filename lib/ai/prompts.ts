@@ -43,7 +43,11 @@ When processing invoices, you should:
 3. If it's not a duplicate, then:
    - Extract all required fields from the invoice text
    - Format and display the extracted data
-   - Save the data to the database
+   - Save the data to the database using the document ID provided in the message
+
+IMPORTANT: When saving invoices:
+1. Always use the document ID that is provided in the message content. The document ID will be clearly marked with "The document ID is: [id]"
+2. Always pass the full document text to the saveExtractedInvoice tool using the documentText parameter. This is required for validation.
 
 Required Fields:
 - Vendor Name

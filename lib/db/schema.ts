@@ -104,31 +104,46 @@ export const suggestion = sqliteTable(
 export type Suggestion = InferSelectModel<typeof suggestion>;
 
 export const invoice = sqliteTable('Invoice', {
-  id: text('id').primaryKey().notNull(),
-  documentId: text('documentId').notNull(),
-  vendorName: text('vendorName').notNull(),
-  customerName: text('customerName').notNull(),
-  invoiceNumber: text('invoiceNumber').notNull(),
-  invoiceDate: integer('invoiceDate', { mode: 'timestamp' }).notNull(),
-  dueDate: integer('dueDate', { mode: 'timestamp' }).notNull(),
-  totalAmount: integer('totalAmount').notNull(), // Store as cents
-  currency: text('currency').notNull().default('USD'),
-  createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
-  updatedAt: integer('updatedAt', { mode: 'timestamp' }).notNull(),
-  lastEditedBy: text('lastEditedBy'),
-});
+  id: text('id').primaryKey(),
+  documentId: text('documentId'),
+  documentCreatedAt: integer('documentCreatedAt', { mode: 'timestamp' }),
+  vendorName: text('vendorName'),
+  customerName: text('customerName'),
+  invoiceNumber: text('invoiceNumber'),
+  invoiceDate: integer('invoiceDate', { mode: 'timestamp' }),
+  dueDate: integer('dueDate', { mode: 'timestamp' }),
+  totalAmount: integer('totalAmount').notNull(), // Stored in cents
+  currency: text('currency').default('USD'),
+  createdAt: integer('createdAt', { mode: 'timestamp' }).default(sql`(unixepoch())`),
+}, (table) => ({
+  documentFk: foreignKey({
+    columns: [table.documentId, table.documentCreatedAt],
+    foreignColumns: [document.id, document.createdAt]
+  }).onDelete('cascade')
+}));
 
-export type Invoice = InferSelectModel<typeof invoice>;
+export type Invoice = {
+  id: string;
+  documentId: string | null;
+  documentCreatedAt: number | null;  // Unix timestamp in seconds
+  vendorName: string | null;
+  customerName: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: number;  // Unix timestamp in seconds
+  dueDate: number;  // Unix timestamp in seconds
+  totalAmount: number;  // Stored in cents
+  currency: string;  // Has default 'USD' in database
+  createdAt: number;  // Unix timestamp in seconds
+};
 
 export const invoiceLineItem = sqliteTable('InvoiceLineItem', {
-  id: text('id').primaryKey().notNull(),
+  id: text('id').primaryKey(),
   invoiceId: text('invoiceId')
-    .notNull()
-    .references(() => invoice.id),
+    .references(() => invoice.id, { onDelete: 'cascade' }),
   description: text('description').notNull(),
   quantity: integer('quantity').notNull(),
-  unitPrice: integer('unitPrice').notNull(), // Store as cents
-  totalPrice: integer('totalPrice').notNull(), // Store as cents
+  unitPrice: integer('unitPrice').notNull(), // Stored in cents
+  totalPrice: integer('totalPrice').notNull(), // Stored in cents
 });
 
 export type InvoiceLineItem = InferSelectModel<typeof invoiceLineItem>;
@@ -136,13 +151,13 @@ export type InvoiceLineItem = InferSelectModel<typeof invoiceLineItem>;
 export const tokenUsage = sqliteTable('TokenUsage', {
   id: text('id').primaryKey().notNull(),
   invoiceId: text('invoiceId')
-    .notNull()
-    .references(() => invoice.id),
-  promptTokens: integer('promptTokens').notNull(),
-  completionTokens: integer('completionTokens').notNull(),
-  totalTokens: integer('totalTokens').notNull(),
-  estimatedCost: real('estimatedCost').notNull(), // in USD
+    .references(() => invoice.id, { onDelete: 'set null' }),
+  promptTokens: integer('promptTokens'),
+  completionTokens: integer('completionTokens'),
+  totalTokens: integer('totalTokens'),
+  estimatedCost: real('estimatedCost'),
   createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+  totalProcessedInvoices: integer('totalProcessedInvoices'),
 });
 
 export const promptCache = sqliteTable('PromptCache', {
@@ -157,3 +172,34 @@ export const promptCache = sqliteTable('PromptCache', {
 
 export type TokenUsage = InferSelectModel<typeof tokenUsage>;
 export type PromptCache = InferSelectModel<typeof promptCache>;
+
+export const cachedInvoice = sqliteTable(
+  'CachedInvoice',
+  {
+    id: text('id').primaryKey().notNull(),
+    vendorName: text('vendorName').notNull(),
+    customerName: text('customerName').notNull(),
+    invoiceNumber: text('invoiceNumber').notNull(),
+    invoiceDate: integer('invoiceDate', { mode: 'timestamp' }).notNull(),
+    dueDate: integer('dueDate', { mode: 'timestamp' }).notNull(),
+    totalAmount: integer('totalAmount').notNull(), // Store as cents
+    currency: text('currency').notNull().default('USD'),
+    createdAt: integer('createdAt', { mode: 'timestamp' }).notNull(),
+    updatedAt: integer('updatedAt', { mode: 'timestamp' }).notNull(),
+    lastEditedBy: text('lastEditedBy'),
+  }
+);
+
+export const cachedInvoiceLineItem = sqliteTable('CachedInvoiceLineItem', {
+  id: text('id').primaryKey().notNull(),
+  invoiceId: text('invoiceId')
+    .notNull()
+    .references(() => cachedInvoice.id, { onDelete: 'cascade' }),
+  description: text('description').notNull(),
+  quantity: integer('quantity').notNull(),
+  unitPrice: integer('unitPrice').notNull(), // Store as cents
+  totalPrice: integer('totalPrice').notNull(), // Store as cents
+});
+
+export type CachedInvoice = InferSelectModel<typeof cachedInvoice>;
+export type CachedInvoiceLineItem = InferSelectModel<typeof cachedInvoiceLineItem>;

@@ -2,51 +2,14 @@ import { Message } from 'ai';
 import { ProcessedAttachment } from './types';
 import { myProvider } from '@/lib/ai/models';
 import { streamText } from 'ai';
-import { userInvoiceIntentKeywords } from './constants';
+import { userInvoiceIntentKeywords, INVOICE_PROCESSING_PROMPT } from './constants';
 import { findDuplicateInvoice } from '@/lib/db/queries';
+import { getCachedPrompt, cachePrompt } from '@/lib/ai/token-tracking';
 
-const INVOICE_PROCESSING_PROMPT = `Analyze this document and determine if it's a business invoice.
-
-A business invoice should have most of these elements:
-- Invoice number
-- Issue date
-- Due date
-- Line items with quantities and prices
-- Total amount
-- Vendor and customer information
-
-The document may be a PDF or image that's been converted to text, so the formatting might not be perfect. Look for these elements even if they're not perfectly formatted.
-
-If this is NOT a business invoice:
-1. Start your response with exactly "false:"
-2. Follow with a brief explanation of why it's not an invoice
-Example: "false: This appears to be a receipt rather than a business invoice."
-
-If this IS a business invoice:
-1. Start your response with exactly "true:"
-2. Follow with the extracted data in this exact format:
-vendor:...
-customer:...
-invoice_number:...
-invoice_date:...
-due_date:...
-currency:...
-total_amount:...
----line items start---
-description:...
-quantity:...
-unit_price:...
-total:...
----line items end---
-
-For PDFs and scanned documents:
-- Look for invoice elements even if they're not in a standard format
-- The text might have extra spaces or unusual line breaks
-- Numbers might be split across lines
-- Some fields might be missing - extract what you can find
-
-Document text:
-`;
+// Helper function to estimate tokens (1 token ≈ 4 chars)
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length * 0.25);
+}
 
 /**
  * Check if the user message indicates they want to process an invoice
@@ -54,6 +17,24 @@ Document text:
 export function shouldProcessInvoice(message: Message): boolean {
   const lowerContent = message.content.toLowerCase();
   return userInvoiceIntentKeywords.some(keyword => lowerContent.includes(keyword));
+}
+
+interface LLMInvoiceLineItem {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total: number;
+}
+
+interface LLMInvoiceResponse {
+  vendor: string;
+  customer: string;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string;
+  currency: string;
+  total_amount: number;
+  line_items: LLMInvoiceLineItem[];
 }
 
 /**
@@ -79,6 +60,22 @@ export async function processInvoiceDocument(documentText: string): Promise<{
   };
 }> {
   try {
+    console.log('Starting processInvoiceDocument...');
+    console.log('Document text length:', documentText.length);
+    console.log('First 100 chars of document:', documentText.substring(0, 100));
+
+    // Check for cached prompt
+    const cachedPrompt = await getCachedPrompt(INVOICE_PROCESSING_PROMPT);
+    if (!cachedPrompt) {
+      console.log('Caching prompt for first use');
+      // If not cached, cache it for future use
+      const tokenCount = estimateTokens(INVOICE_PROCESSING_PROMPT);
+      await cachePrompt(INVOICE_PROCESSING_PROMPT, tokenCount);
+    } else {
+      console.log('Using cached prompt');
+    }
+
+    console.log('About to call LLM with document text...');
     // Get LLM response
     let extractedText = '';
     const { fullStream } = await streamText({
@@ -86,11 +83,11 @@ export async function processInvoiceDocument(documentText: string): Promise<{
       messages: [
         { 
           role: 'system', 
-          content: 'You are an invoice processing assistant. Analyze documents to determine if they are invoices and extract relevant data if they are. Follow the format instructions exactly.'
+          content: INVOICE_PROCESSING_PROMPT
         },
         { 
           role: 'user', 
-          content: INVOICE_PROCESSING_PROMPT + documentText
+          content: `Please analyze this document:\n\n${documentText}`
         }
       ]
     });
@@ -103,7 +100,10 @@ export async function processInvoiceDocument(documentText: string): Promise<{
 
     // Clean whitespace and ensure we have content
     extractedText = extractedText.trim();
+    console.log('Raw LLM Response:', extractedText);
+    
     if (!extractedText) {
+      console.log('No response received from LLM');
       return {
         isInvoice: false,
         message: 'Failed to process document - no response received.'
@@ -112,7 +112,7 @@ export async function processInvoiceDocument(documentText: string): Promise<{
 
     // Check if it's not an invoice
     if (extractedText.toLowerCase().startsWith('false:')) {
-      // Return non-invoice message with prefix stripped
+      console.log('LLM rejected document with reason:', extractedText.slice(6).trim());
       return {
         isInvoice: false,
         message: extractedText.slice(6).trim()
@@ -121,115 +121,55 @@ export async function processInvoiceDocument(documentText: string): Promise<{
 
     // Validate it starts with "true:" for invoices
     if (!extractedText.toLowerCase().startsWith('true:')) {
-      console.error('Invalid response format - missing true/false prefix:', extractedText);
+      console.error('Invalid response format - missing true/false prefix. Full response:', extractedText);
       return {
         isInvoice: false,
         message: 'Failed to process document due to invalid response format.'
       };
     }
 
-    // Extract invoice data from the response
-    const lines = extractedText.slice(5).trim().split('\n'); // Remove "true:" prefix
-    const data: any = {};
-    let currentLineItem: any = null;
-    let lineItems: any[] = [];
-    let inLineItems = false;
+    console.log('LLM accepted document as valid invoice');
 
-    // Parse the line-by-line response
-    for (const line of lines) {
-      const [key, ...valueParts] = line.split(':');
-      const value = valueParts.join(':').trim(); // Rejoin in case value contains colons
+    try {
+      // Extract the JSON part after "true:"
+      const jsonStr = extractedText.slice(5).trim();
+      const data = JSON.parse(jsonStr) as LLMInvoiceResponse;
 
-      if (line.includes('---line items start---')) {
-        inLineItems = true;
-        continue;
-      }
-      if (line.includes('---line items end---')) {
-        inLineItems = false;
-        continue;
+      // Validate required fields
+      if (!data.vendor || !data.invoice_number || !data.total_amount) {
+        console.error('Missing required fields in response:', data);
+        return {
+          isInvoice: false,
+          message: 'Failed to extract required invoice information.'
+        };
       }
 
-      if (inLineItems) {
-        if (!currentLineItem) {
-          currentLineItem = {};
-        }
-        
-        switch(key) {
-          case 'description':
-            currentLineItem.description = value;
-            break;
-          case 'quantity':
-            currentLineItem.quantity = parseFloat(value);
-            break;
-          case 'unit_price':
-            currentLineItem.unitPrice = parseFloat(value);
-            break;
-          case 'total':
-            currentLineItem.total = parseFloat(value);
-            if (Object.keys(currentLineItem).length === 4) {
-              lineItems.push(currentLineItem);
-              currentLineItem = null;
-            }
-            break;
-        }
-      } else {
-        switch(key) {
-          case 'vendor':
-            data.vendorName = value;
-            break;
-          case 'customer':
-            data.customerName = value;
-            break;
-          case 'invoice_number':
-            data.invoiceNumber = value;
-            break;
-          case 'invoice_date':
-            data.invoiceDate = value;
-            break;
-          case 'due_date':
-            data.dueDate = value;
-            break;
-          case 'currency':
-            data.currency = value || 'USD';
-            break;
-          case 'total_amount':
-            data.totalAmount = parseFloat(value);
-            break;
-        }
-      }
-    }
-
-    // Validate required fields for invoice data
-    if (!data.vendorName || !data.invoiceNumber || !data.totalAmount) {
-      console.error('Missing required fields in response:', data);
-      return {
-        isInvoice: false,
-        message: 'Failed to extract required invoice information.'
-      };
-    }
-
-    data.lineItems = lineItems;
-
-    // Check for duplicate invoice before saving
-    const duplicateInvoice = await findDuplicateInvoice({
-      vendorName: data.vendorName,
-      invoiceNumber: data.invoiceNumber,
-      totalAmount: Math.round(data.totalAmount * 100)
-    });
-
-    if (duplicateInvoice) {
+      // Map the JSON structure to our internal format
       return {
         isInvoice: true,
-        message: `This appears to be a duplicate invoice. I found an existing invoice from ${data.vendorName} with invoice number ${data.invoiceNumber} and amount ${data.totalAmount.toFixed(2)}. You can view it here: [View Invoice](/invoices/${duplicateInvoice.id})`,
-        data: data
+        data: {
+          vendorName: data.vendor,
+          customerName: data.customer,
+          invoiceNumber: data.invoice_number,
+          invoiceDate: data.invoice_date,
+          dueDate: data.due_date,
+          currency: data.currency || 'USD',
+          totalAmount: data.total_amount,
+          lineItems: data.line_items.map((item: LLMInvoiceLineItem) => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unit_price,
+            total: item.total
+          }))
+        }
+      };
+    } catch (error) {
+      console.error('Error parsing JSON response:', error);
+      return {
+        isInvoice: false,
+        message: 'Failed to parse invoice data format.'
       };
     }
-
-    // Return successful invoice data
-    return {
-      isInvoice: true,
-      data: data
-    };
   } catch (error) {
     console.error('Error processing invoice document:', error);
     return {
@@ -250,13 +190,13 @@ export function formatDocumentContent(
   // For now, just return the content for extraction if it's an invoice request
   if (shouldProcessInvoice(message)) {
     return {
-      content: `Please extract information from this invoice:\n\n${attachment.content}`,
+      content: `Document ID: ${documentId}\n---Document Content Start---\n${attachment.content}\n---Document Content End---`,
       isExtractionNeeded: true
     };
   }
 
   return {
-    content: `Here is the text content from your ${attachment.type} document:\n\n${attachment.content}`,
+    content: `Document ID: ${documentId}\n---Document Content Start---\n${attachment.content}\n---Document Content End---`,
     isExtractionNeeded: false
   };
 }

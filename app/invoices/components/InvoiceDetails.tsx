@@ -67,7 +67,7 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
             <Label htmlFor="vendorName">Vendor Name</Label>
             <Input
               id="vendorName"
-              value={invoice.vendorName}
+              value={invoice.vendorName || ''}
               onChange={(e) => setInvoice({ ...invoice, vendorName: e.target.value })}
               disabled={!isEditing}
             />
@@ -76,7 +76,7 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
             <Label htmlFor="customerName">Customer Name</Label>
             <Input
               id="customerName"
-              value={invoice.customerName}
+              value={invoice.customerName || ''}
               onChange={(e) => setInvoice({ ...invoice, customerName: e.target.value })}
               disabled={!isEditing}
             />
@@ -85,7 +85,7 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
             <Label htmlFor="invoiceNumber">Invoice Number</Label>
             <Input
               id="invoiceNumber"
-              value={invoice.invoiceNumber}
+              value={invoice.invoiceNumber || ''}
               onChange={(e) => setInvoice({ ...invoice, invoiceNumber: e.target.value })}
               disabled={!isEditing}
             />
@@ -96,7 +96,10 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
               id="invoiceDate"
               type="date"
               value={format(new Date(invoice.invoiceDate), 'yyyy-MM-dd')}
-              onChange={(e) => setInvoice({ ...invoice, invoiceDate: new Date(e.target.value) })}
+              onChange={(e) => setInvoice({ 
+                ...invoice, 
+                invoiceDate: Math.floor(new Date(e.target.value).getTime() / 1000)
+              })}
               disabled={!isEditing}
             />
           </div>
@@ -106,7 +109,10 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
               id="dueDate"
               type="date"
               value={format(new Date(invoice.dueDate), 'yyyy-MM-dd')}
-              onChange={(e) => setInvoice({ ...invoice, dueDate: new Date(e.target.value) })}
+              onChange={(e) => setInvoice({ 
+                ...invoice, 
+                dueDate: Math.floor(new Date(e.target.value).getTime() / 1000)
+              })}
               disabled={!isEditing}
             />
           </div>
@@ -116,6 +122,24 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
               id="currency"
               value={invoice.currency}
               onChange={(e) => setInvoice({ ...invoice, currency: e.target.value })}
+              disabled={!isEditing}
+            />
+          </div>
+          <div>
+            <Label htmlFor="totalAmount">Total Amount</Label>
+            <Input
+              id="totalAmount"
+              type="number"
+              step="0.01"
+              min="0"
+              value={(invoice.totalAmount / 100).toFixed(2)}
+              onChange={(e) => {
+                const value = e.target.value === '' ? '0' : e.target.value;
+                setInvoice({
+                  ...invoice,
+                  totalAmount: Math.round(parseFloat(value) * 100)
+                });
+              }}
               disabled={!isEditing}
             />
           </div>
@@ -160,11 +184,7 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
                           quantity,
                           totalPrice: Math.round(item.unitPrice * quantity)
                         };
-                        setInvoice({ 
-                          ...invoice, 
-                          lineItems: newLineItems,
-                          totalAmount: newLineItems.reduce((sum, item) => sum + item.totalPrice, 0)
-                        });
+                        setInvoice({ ...invoice, lineItems: newLineItems });
                       }}
                       disabled={!isEditing}
                     />
@@ -178,22 +198,19 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
                       onChange={(e) => {
                         const newLineItems = [...invoice.lineItems];
                         const value = e.target.value === '' ? '0' : e.target.value;
+                        const unitPrice = Math.round(parseFloat(value) * 100);
                         newLineItems[index] = { 
                           ...item, 
-                          unitPrice: Math.round(parseFloat(value) * 100),
-                          totalPrice: Math.round(parseFloat(value) * 100 * item.quantity)
+                          unitPrice,
+                          totalPrice: unitPrice * item.quantity
                         };
-                        setInvoice({ 
-                          ...invoice, 
-                          lineItems: newLineItems,
-                          totalAmount: newLineItems.reduce((sum, item) => sum + item.totalPrice, 0)
-                        });
+                        setInvoice({ ...invoice, lineItems: newLineItems });
                       }}
                       disabled={!isEditing}
                     />
                   </TableCell>
                   <TableCell>
-                    {invoice.currency} {((item.quantity * item.unitPrice) / 100).toFixed(2)}
+                    {invoice.currency} {(item.totalPrice / 100).toFixed(2)}
                   </TableCell>
                 </TableRow>
               ))}
@@ -201,10 +218,18 @@ export function InvoiceDetails({ invoice: initialInvoice }: InvoiceDetailsProps)
           </Table>
         </div>
 
-        <div className="mt-4 text-right">
-          <div className="text-lg font-semibold">
-            Total Amount: {invoice.currency} {(invoice.totalAmount / 100).toFixed(2)}
+        <div className="mt-4 text-right space-y-2">
+          <div className="text-sm text-muted-foreground">
+            Line Items Total: {invoice.currency} {(invoice.lineItems.reduce((sum, item) => sum + item.totalPrice, 0) / 100).toFixed(2)}
           </div>
+          <div className="text-lg font-semibold">
+            Invoice Total: {invoice.currency} {(invoice.totalAmount / 100).toFixed(2)}
+          </div>
+          {isEditing && invoice.totalAmount !== invoice.lineItems.reduce((sum, item) => sum + item.totalPrice, 0) && (
+            <div className="text-sm text-yellow-600 dark:text-yellow-500">
+              Note: Invoice total differs from line items total
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

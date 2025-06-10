@@ -1,5 +1,4 @@
 import { openai } from '@ai-sdk/openai';
-import { fireworks } from '@ai-sdk/fireworks';
 import {
   customProvider,
   extractReasoningMiddleware,
@@ -18,7 +17,7 @@ export const myProvider = customProvider({
     'chat-model-small': openaiWithTracking('gpt-4o-mini'),
     'chat-model-large': openaiWithTracking('gpt-4o'),
     'chat-model-reasoning': wrapLanguageModel({
-      model: fireworks('accounts/fireworks/models/deepseek-r1'),
+      model: openaiWithTracking('gpt-4o'),
       middleware: extractReasoningMiddleware({ tagName: 'think' }),
     }),
     'title-model': openaiWithTracking('gpt-4o-mini'),

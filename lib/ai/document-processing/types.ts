@@ -9,6 +9,7 @@ export interface ProcessedAttachment {
   content: string;
   isExtractionNeeded: boolean;
   shouldSaveDocument: boolean;
+  usedCache?: boolean;
 }
 
 export interface ExtractedInvoiceData {

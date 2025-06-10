@@ -1,1 +1,0 @@
-ALTER TABLE Invoice DROP COLUMN status; 

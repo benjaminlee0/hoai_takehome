@@ -7,7 +7,7 @@ import {
 import { auth } from '@/app/(auth)/auth';
 import { myProvider } from '@/lib/ai/models';
 import { systemPrompt } from '@/lib/ai/prompts';
-import { trackTokenUsage } from '@/lib/ai/token-tracking';
+import { trackTokenUsage, getCachedPrompt, cachePrompt } from '@/lib/ai/token-tracking';
 import {
   deleteChatById,
   getChatById,
@@ -40,6 +40,11 @@ import {
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  const session = await auth();
+  if (!session?.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
   const raw = await request.text();
   const body: {
     id: string;
@@ -52,16 +57,8 @@ export async function POST(request: Request) {
   const lastMessage = messages[messages.length - 1];
   const parsedAttachments = lastMessage.experimental_attachments || [];
 
-  console.log('Received attachments:', JSON.stringify(parsedAttachments, null, 2));
-
-  const session = await auth();
-
-  if (!session || !session.user || !session.user.id) {
-    return new Response('Unauthorized', { status: 401 });
-  }
-
+  // Get the most recent user message
   const userMessage = getMostRecentUserMessage(messages);
-
   if (!userMessage) {
     return new Response('No user message found', { status: 400 });
   }
@@ -88,31 +85,29 @@ export async function POST(request: Request) {
   let updatedMessages = [...messages];
   
   if (parsedAttachments.length > 0) {
-    // Log the structure of each attachment
-    parsedAttachments.forEach((att, i) => {
-      console.log(`Attachment ${i} structure:`, {
-        id: att.id,
-        contentType: att.contentType,
-        name: att.name,
-        size: att.size,
-        hasContent: !!att.content,
-        contentStart: att.content ? att.content.substring(0, 50) + '...' : 'no content'
-      });
-    });
 
     const processedAttachments = await processAttachments(parsedAttachments, userMessage);
     
     for (const attachment of processedAttachments) {
-      const documentId = await saveProcessedDocument(attachment, session.user.id);
+      const docResult = await saveProcessedDocument(attachment, session.user.id);
 
-      // Only create document message if we actually saved the document or if it's a non-invoice
+      // Create document message
+      const formattedContent = formatDocumentContent(attachment, docResult?.id || '', {
+        ...userMessage,
+        chatId: id,
+        createdAt: new Date()
+      });
+
       const documentMessage = {
         id: generateUUID(),
         role: 'assistant' as const,
-        content: attachment.content,
+        content: formattedContent.content,
         createdAt: new Date(),
         chatId: id,
-        ...(documentId && { documentId }) // Only include documentId if we saved the document
+        ...(docResult && { 
+          documentId: docResult.id,
+          documentCreatedAt: docResult.createdAt 
+        }) // Only include document info if we actually saved the document
       };
 
       await saveMessages({
@@ -147,10 +142,14 @@ export async function POST(request: Request) {
               ],
         experimental_transform: smoothStream({ chunking: 'word' }),
         experimental_generateMessageId: generateUUID,
-        onFinish: async ({ usage }) => {
+        onFinish: async ({ usage, response }) => {
           if (session.user?.id && usage) {
             try {
               await trackTokenUsage(generateUUID(), usage);
+              // Cache the prompt and response
+              if (userMessage.content) {
+                await cachePrompt(userMessage.content, usage.totalTokens);
+              }
             } catch (error) {
               console.error('Failed to track token usage:', error);
             }

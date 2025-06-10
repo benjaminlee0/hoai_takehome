@@ -235,7 +235,7 @@ export function getDocumentTimestampByIndex(
 }
 
 export function convertToAIMessage(message: Message): AIMessage {
-  const { chatId, createdAt, ...rest } = message;
+  const { chatId, createdAt, documentId, documentCreatedAt, ...rest } = message;
   return {
     ...rest,
     content: Array.isArray(message.content) 
@@ -245,7 +245,9 @@ export function convertToAIMessage(message: Message): AIMessage {
           }
           return '';
         }).join('')
-      : message.content
+      : message.content,
+    documentId: documentId,
+    documentCreatedAt: documentCreatedAt,
   };
 }
 

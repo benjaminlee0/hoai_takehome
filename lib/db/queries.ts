@@ -16,6 +16,9 @@ import {
   invoiceLineItem,
   type Invoice,
   type InvoiceLineItem,
+  tokenUsage,
+  cachedInvoice,
+  cachedInvoiceLineItem,
 } from './schema';
 import type { BlockKind } from '@/components/block';
 
@@ -194,13 +197,15 @@ export async function getDocumentsById({ id }: { id: string }) {
 
 export async function getDocumentById({ id }: { id: string }) {
   try {
-    const [selectedDocument] = await db
+    // Get all documents with this ID
+    const [doc] = await db
       .select()
       .from(document)
       .where(eq(document.id, id))
-      .orderBy(desc(document.createdAt));
+      .orderBy(desc(document.createdAt))
+      .limit(1);
 
-    return selectedDocument;
+    return doc || null;
   } catch (error) {
     console.error('Failed to get document by id from database');
     throw error;
@@ -330,7 +335,8 @@ export async function updateChatVisiblityById({
 
 interface SaveInvoiceProps {
   id: string;
-  documentId: string;
+  documentId?: string;
+  documentCreatedAt?: Date;
   vendorName: string;
   customerName: string;
   invoiceNumber: string;
@@ -345,6 +351,7 @@ interface SaveInvoiceProps {
 export async function saveInvoice({
   id,
   documentId,
+  documentCreatedAt,
   vendorName,
   customerName,
   invoiceNumber,
@@ -358,19 +365,12 @@ export async function saveInvoice({
   const now = new Date();
   
   try {
-    console.log('Saving invoice:', {
-      id,
-      vendorName,
-      customerName,
-      invoiceNumber,
-      totalAmount,
-      currency
-    });
 
     // Save invoice first
     db.insert(invoice).values({
       id,
       documentId,
+      documentCreatedAt,
       vendorName,
       customerName,
       invoiceNumber,
@@ -379,8 +379,6 @@ export async function saveInvoice({
       totalAmount,
       currency,
       createdAt: now,
-      updatedAt: now,
-      lastEditedBy,
     }).run();
 
     console.log('Successfully saved invoice with ID:', id);
@@ -390,7 +388,10 @@ export async function saveInvoice({
       db.insert(invoiceLineItem).values({
         id: generateUUID(),
         invoiceId: id,
-        ...item,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice,
       }).run()
     );
 
@@ -455,7 +456,6 @@ export async function updateInvoice({
         ...(totalAmount && { totalAmount }),
         ...(currency && { currency }),
         ...(lastEditedBy && { lastEditedBy }),
-        updatedAt: now,
       })
       .where(eq(invoice.id, id))
       .run();
@@ -471,7 +471,10 @@ export async function updateInvoice({
           .values({
             id: generateUUID(),
             invoiceId: id,
-            ...item,
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: Math.round(item.unitPrice * 100), // Convert to cents
+            totalPrice: Math.round(item.totalPrice * 100), // Convert to cents
           })
           .run()
       );
@@ -526,6 +529,7 @@ export async function getInvoices({
     console.log('Found invoices:', results.length);
     console.log('Invoice IDs:', results.map(r => r.id));
     
+    // Return raw timestamps
     return results;
   } catch (error) {
     console.error('Error fetching invoices:', error);
@@ -546,6 +550,7 @@ export async function getInvoiceById(id: string) {
     .from(invoiceLineItem)
     .where(eq(invoiceLineItem.invoiceId, id));
 
+  // Return raw timestamps
   return {
     ...foundInvoice,
     lineItems,
@@ -554,10 +559,12 @@ export async function getInvoiceById(id: string) {
 
 export async function deleteInvoiceById(id: string) {
   db.transaction(() => {
+    // Delete invoice line items
     db.delete(invoiceLineItem)
       .where(eq(invoiceLineItem.invoiceId, id))
       .run();
     
+    // Delete the invoice itself
     db.delete(invoice)
       .where(eq(invoice.id, id))
       .run();
@@ -601,6 +608,75 @@ export async function findDuplicateInvoice({
     return existingInvoice;
   } catch (error) {
     console.error('Error checking for duplicate invoice:', error);
+    throw error;
+  }
+}
+
+interface SaveCachedInvoiceProps {
+  id: string;
+  vendorName: string;
+  customerName: string;
+  invoiceNumber: string;
+  invoiceDate: Date;
+  dueDate: Date;
+  totalAmount: number;
+  currency: string;
+  lineItems: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>;
+  lastEditedBy?: string;
+}
+
+export async function saveCachedInvoice({
+  id,
+  vendorName,
+  customerName,
+  invoiceNumber,
+  invoiceDate,
+  dueDate,
+  totalAmount,
+  currency,
+  lineItems,
+  lastEditedBy,
+}: SaveCachedInvoiceProps) {
+  try {
+    const now = new Date();
+
+    // Save the invoice
+    await db.insert(cachedInvoice).values([{
+      id,
+      vendorName,
+      customerName,
+      invoiceNumber,
+      invoiceDate,
+      dueDate,
+      totalAmount,
+      currency,
+      createdAt: now.getTime(),
+      updatedAt: now.getTime(),
+      lastEditedBy,
+    }]);
+
+    // Save line items
+    if (lineItems.length > 0) {
+      await db.insert(cachedInvoiceLineItem).values(
+        lineItems.map((item) => ({
+          id: generateUUID(),
+          invoiceId: id,
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+        }))
+      );
+    }
+
+    return id;
+  } catch (error) {
+    console.error('Failed to save cached invoice:', error);
     throw error;
   }
 }

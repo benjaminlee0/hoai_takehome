@@ -14,7 +14,7 @@ export async function GET() {
       getTokenSavingsMetrics()
     ]);
 
-    return Response.json({
+    const responseData = {
       cost: {
         averageCost: costMetrics.averageCost.toFixed(4),
         totalInvoices: costMetrics.totalInvoices,
@@ -23,10 +23,14 @@ export async function GET() {
       savings: {
         tokensSaved: savingsMetrics.tokensSaved,
         totalCaches: savingsMetrics.totalCaches,
-        totalReuse: savingsMetrics.totalReuse,
+        totalUses: savingsMetrics.totalUses,
+        cacheHits: savingsMetrics.cacheHits,
+        hitRate: savingsMetrics.hitRate,
         estimatedCostSaved: savingsMetrics.estimatedCostSaved.toFixed(4),
       }
-    });
+    };
+
+    return Response.json(responseData);
   } catch (error) {
     console.error('Error fetching token usage stats:', error);
     return new Response('Internal Server Error', { status: 500 });

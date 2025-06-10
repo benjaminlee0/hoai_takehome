@@ -7,6 +7,8 @@ export interface Message extends Omit<AIMessage, 'role'> {
   role: Role;
   createdAt?: Date;
   chatId?: string;
+  documentId?: string;
+  documentCreatedAt?: Date;
   experimental_attachments?: any[];
 }
 
@@ -47,16 +49,17 @@ export interface Suggestion {
 
 export interface Invoice {
   id: string;
-  documentId: string;
-  vendorName: string;
-  customerName: string;
-  invoiceNumber: string;
-  invoiceDate: Date;
-  dueDate: Date;
-  totalAmount: number;
-  currency: string;
-  createdAt: Date;
-  updatedAt: Date;
+  documentId: string | null;
+  documentCreatedAt: number | null;
+  vendorName: string | null;
+  customerName: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: number;  // Unix timestamp in seconds
+  dueDate: number;  // Unix timestamp in seconds
+  totalAmount: number;  // Stored in cents
+  currency: string;  // Has default 'USD' in database
+  createdAt: number;  // Unix timestamp in seconds
+  updatedAt?: number;  // Unix timestamp in seconds
   lastEditedBy?: string;
 }
 
@@ -78,3 +81,23 @@ export interface Attachment {
   url?: string;
   data?: string | Buffer | ArrayBufferView;
 }
+
+export interface TextPart {
+  type: 'text';
+  text: string;
+}
+
+export interface ToolCallPart {
+  type: 'tool-call';
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, any>;
+}
+
+export interface ToolResultPart {
+  type: 'tool-result';
+  toolCallId: string;
+  result: any;
+}
+
+export type MessageContent = Array<TextPart | ToolCallPart | ToolResultPart>;
